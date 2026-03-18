@@ -41,7 +41,15 @@ def trim_clip(
     length = padded_end - padded_start
 
     ffmpeg_exe = _get_ffmpeg_executable()
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    out_dir = os.path.dirname(output_path) or "."
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Check we can write to the output directory
+    if not os.access(out_dir, os.W_OK):
+        raise PermissionError(
+            f"Cannot write to '{out_dir}'. "
+            f"Use --output-dir to specify a writable directory."
+        )
 
     # Attempt 1: stream-copy (fast, no quality loss)
     copy_result = subprocess.run(
@@ -58,22 +66,42 @@ def trim_clip(
         text=True,
     )
 
-    if copy_result.returncode == 0 and os.path.isfile(output_path):
+    # Accept if copy produced a non-empty file (ffmpeg may return non-zero
+    # but still write a usable file when cutting on non-keyframes)
+    if os.path.isfile(output_path) and os.path.getsize(output_path) > 1024:
         return output_path
 
-    # Attempt 2: re-encode (handles mid-GOP seeks, format quirks)
+    # Attempt 2: re-encode with output seeking (more compatible, slower)
+    # Use mpeg4/aac which are built into every ffmpeg build (no libx264 needed)
+    reencode_result = subprocess.run(
+        [
+            ffmpeg_exe,
+            "-y",
+            "-i", source_file,
+            "-ss", str(padded_start),
+            "-t", str(length),
+            "-c:v", "mpeg4",
+            "-q:v", "5",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            output_path,
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    if reencode_result.returncode == 0 and os.path.isfile(output_path):
+        return output_path
+
+    # Attempt 3: just copy with output seeking (slower but avoids codec issues)
     subprocess.run(
         [
             ffmpeg_exe,
             "-y",
-            "-ss", str(padded_start),
             "-i", source_file,
+            "-ss", str(padded_start),
             "-t", str(length),
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "18",
-            "-c:a", "aac",
-            "-b:a", "128k",
+            "-c", "copy",
             output_path,
         ],
         capture_output=True,

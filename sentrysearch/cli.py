@@ -41,6 +41,9 @@ def _handle_error(e: Exception) -> None:
     if isinstance(e, GeminiQuotaError):
         click.secho("Error: " + str(e), fg="yellow", err=True)
         raise SystemExit(1)
+    if isinstance(e, PermissionError):
+        click.secho("Error: " + str(e), fg="red", err=True)
+        raise SystemExit(1)
     if isinstance(e, RuntimeError) and "ffmpeg" in str(e).lower():
         click.secho(
             "Error: ffmpeg is not available.\n\n"
@@ -142,7 +145,7 @@ def index(directory, chunk_duration, overlap, verbose):
 @click.argument("query")
 @click.option("-n", "--results", "n_results", default=5, show_default=True,
               help="Number of results to return.")
-@click.option("-o", "--output-dir", default=".", show_default=True,
+@click.option("-o", "--output-dir", default="~/sentrysearch_clips", show_default=True,
               help="Directory to save trimmed clips.")
 @click.option("--trim/--no-trim", default=True, show_default=True,
               help="Auto-trim the top result.")
@@ -151,6 +154,8 @@ def search(query, n_results, output_dir, trim, verbose):
     """Search indexed footage with a natural language QUERY."""
     from .search import search_footage
     from .store import SentryStore
+
+    output_dir = os.path.expanduser(output_dir)
 
     try:
         store = SentryStore()
