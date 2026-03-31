@@ -268,11 +268,46 @@ If the database is empty and you set `OIDC_BOOTSTRAP_ADMIN_EMAIL`, the first suc
 
 ## GitHub Actions: deploy on push to your fork (`master`)
 
-The workflow **`.github/workflows/deploy.yml`** SSHs into the VPS, runs **`git pull --ff-only`** on **`master`**, then **`docker compose up -d --build`**.
+Workflow: **`.github/workflows/deploy.yml`**. On each push to **`master`** (when enabled), GitHub SSHs into the VPS, runs **`git pull --ff-only origin master`**, then **`docker compose up -d --build`** in **`DEPLOY_PATH`** (default **`/opt/sentrysearch`**).
 
-1. **Secrets** (repo → Settings → Secrets and variables → Actions): `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` (private key whose public key is on the server’s `authorized_keys`). Optional: `DEPLOY_PATH` (default `/opt/sentrysearch`).
-2. **Variable:** `DEPLOY_SSH_CONFIGURED` = `true` — without this, **push** does not deploy (forks stay safe). **Actions → Deploy → Run workflow** still runs manually.
-3. **Server:** `origin` must be your fork’s GitHub URL; deploy user in **`docker`** group so `docker compose` works without a password.
+### VPS checklist (do this once on the server)
+
+Run the automated checks (as the **same Linux user** GitHub will use, e.g. `conbo`):
+
+```bash
+cd /opt/sentrysearch
+git pull   # get latest scripts
+bash scripts/vps_check_deploy_ready.sh
+```
+
+Fix every **FAIL** line until the script exits cleanly.
+
+| Step | What to verify |
+|------|----------------|
+| **1. App directory** | **`/opt/sentrysearch`** (or your `DEPLOY_PATH`) is a **git clone** of **your fork** (the repo you `git push` to). |
+| **2. `origin` URL** | **`git remote -v`** → `origin` should be **`git@github.com:YOUR_USER/sentrysearch.git`** (recommended) or HTTPS with a credential that allows **non-interactive** `git pull`. |
+| **3. Branch `master`** | Exists locally and tracks your fork: **`git checkout master`**, **`git pull origin master`** works from an SSH session. |
+| **4. Git auth for pulls** | For a **private** fork: add a **read-only Deploy key** (fork → **Settings → Deploy keys**) and use **`~/.ssh/config`** on the VPS, or use **`origin`** over SSH with a key in the deploy user’s **`~/.ssh`**. |
+| **5. Docker without sudo** | **`sudo usermod -aG docker conbo`** then **log out and back in**. Verify: **`docker compose version`** and **`docker info`** work as that user. |
+| **6. `.env`** | Present, **`chmod 600`**, owned by the deploy user so **`docker compose config`** succeeds: **`chown conbo:conbo .env`**. |
+| **7. `docker-compose.yml`** | Exactly **one** host mapping to container **7778** (no duplicate `ports:` lines). For production behind Caddy, prefer **`127.0.0.1:${OPTIMUS_PORT:-7778}:7778`**. |
+| **8. First deploy test** | **`docker compose up -d --build`** and **`curl -fsS http://127.0.0.1:7778/api/health`**. |
+
+### GitHub configuration (fork repo)
+
+| Type | Name | Value |
+|------|------|--------|
+| Secret | `DEPLOY_HOST` | VPS IP or DNS |
+| Secret | `DEPLOY_USER` | e.g. `conbo` |
+| Secret | `DEPLOY_SSH_KEY` | Private key (PEM); **public** key in **`/home/DEPLOY_USER/.ssh/authorized_keys`** |
+| Secret | `DEPLOY_PATH` | Optional; omit to use `/opt/sentrysearch` |
+| Variable | `DEPLOY_SSH_CONFIGURED` | **`true`** — required for **automatic** deploy on push to `master` |
+
+Without **`DEPLOY_SSH_CONFIGURED`**, pushes do not run deploy; use **Actions → Deploy → Run workflow** to test manually.
+
+### After changing VPS layout
+
+Re-run **`bash scripts/vps_check_deploy_ready.sh`** any time you change users, Docker, or `docker-compose.yml`.
 
 ---
 

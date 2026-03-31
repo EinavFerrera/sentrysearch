@@ -9,8 +9,8 @@
 # Variables (same Settings page → Variables):
 #   DEPLOY_SSH_CONFIGURED = true   — required for automatic deploy on push to master
 #
-# Server: git clone of this repo, user in `docker` group (or edit remote script to use sudo).
-# See DEPLOY-HETZNER.md → "Automatic deploy when you push to GitHub".
+# On the VPS, run:  bash scripts/vps_check_deploy_ready.sh
+# See DEPLOY-HETZNER.md → "GitHub Actions: deploy on push to your fork".
 
 name: Deploy
 
