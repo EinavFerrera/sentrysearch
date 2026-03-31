@@ -147,7 +147,7 @@
                 <circle cx="11" cy="11" r="8" />
                 <line x1="21" y1="21" x2="16.65" y2="16.65" />
               </svg>
-              <h2>Optimus Vision</h2>
+              <h2>Optimus Vision 1.0</h2>
               <p>Describe what you're looking for in your operation.</p>
             </div>
           </div>
@@ -358,11 +358,15 @@
           <div class="admin-card">
             <h3>Sign-in (OAuth 2.0 / OpenID Connect)</h3>
             <p class="admin-hint">
-              Configure <code>OIDC_ISSUER</code>, <code>OIDC_CLIENT_ID</code>, and
-              <code>OIDC_CLIENT_SECRET</code> on the server. Redirect URI must match
-              your deployment (e.g. <code>https://your-domain/auth/callback</code>).
+              Configure <code>OIDC_ISSUER</code>, <code>OIDC_CLIENT_ID</code>,
+              and <code>OIDC_CLIENT_SECRET</code> on the server. Redirect URI
+              must match your deployment (e.g.
+              <code>https://your-domain/auth/callback</code>).
             </p>
-            <p id="admin-oauth-redirect" class="admin-hint admin-oauth-redirect hidden"></p>
+            <p
+              id="admin-oauth-redirect"
+              class="admin-hint admin-oauth-redirect hidden"
+            ></p>
             <label class="admin-toggle">
               <input type="checkbox" id="auth-enabled-toggle" />
               <span>Require SSO to use the application</span>
@@ -383,7 +387,11 @@
                 <option value="user" selected>User</option>
                 <option value="admin">Admin</option>
               </select>
-              <button type="button" class="btn-primary admin-add-btn" id="admin-add-user">
+              <button
+                type="button"
+                class="btn-primary admin-add-btn"
+                id="admin-add-user"
+              >
                 Add
               </button>
             </div>

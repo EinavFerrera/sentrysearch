@@ -266,6 +266,16 @@ If the database is empty and you set `OIDC_BOOTSTRAP_ADMIN_EMAIL`, the first suc
 
 ---
 
+## GitHub Actions: deploy on push to your fork (`master`)
+
+The workflow **`.github/workflows/deploy.yml`** SSHs into the VPS, runs **`git pull --ff-only`** on **`master`**, then **`docker compose up -d --build`**.
+
+1. **Secrets** (repo → Settings → Secrets and variables → Actions): `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` (private key whose public key is on the server’s `authorized_keys`). Optional: `DEPLOY_PATH` (default `/opt/sentrysearch`).
+2. **Variable:** `DEPLOY_SSH_CONFIGURED` = `true` — without this, **push** does not deploy (forks stay safe). **Actions → Deploy → Run workflow** still runs manually.
+3. **Server:** `origin` must be your fork’s GitHub URL; deploy user in **`docker`** group so `docker compose` works without a password.
+
+---
+
 ## Environment variables reference
 
 | Variable | Required | Description |

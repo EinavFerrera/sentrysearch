@@ -1,0 +1,58 @@
+# Deploy to your VPS when you push to `master` on your fork.
+#
+# GitHub → Settings → Secrets and variables → Actions → Secrets:
+#   DEPLOY_HOST       — VPS IP or hostname
+#   DEPLOY_USER       — SSH user (e.g. conbo)
+#   DEPLOY_SSH_KEY    — private key (PEM); matching public key in ~/.ssh/authorized_keys on the server
+#   DEPLOY_PATH       — optional; default /opt/sentrysearch
+#
+# Variables (same Settings page → Variables):
+#   DEPLOY_SSH_CONFIGURED = true   — required for automatic deploy on push to master
+#
+# Server: git clone of this repo, user in `docker` group (or edit remote script to use sudo).
+# See DEPLOY-HETZNER.md → "Automatic deploy when you push to GitHub".
+
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || vars.DEPLOY_SSH_CONFIGURED == 'true'
+
+    steps:
+      - name: Load SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust server host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Pull and rebuild on server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          REMOTE_PATH="${DEPLOY_PATH:-/opt/sentrysearch}"
+          ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" bash -s << EOF
+          set -euo pipefail
+          cd "${REMOTE_PATH}"
+          git fetch origin master
+          git checkout master
+          git pull --ff-only origin master
+          docker compose up -d --build
+          docker compose ps
+          EOF
