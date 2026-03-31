@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign in — Optimus Vision</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..600;1,9..40,400..600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/style.css" />
+    <style>
+      .login-wrap {
+        min-height: calc(100vh - 40px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: var(--sp-8);
+      }
+      .login-card {
+        width: 100%;
+        max-width: 400px;
+        padding: var(--sp-8);
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        text-align: center;
+      }
+      .login-card h1 {
+        font-size: var(--fs-xl);
+        margin-bottom: var(--sp-2);
+      }
+      .login-card p {
+        color: var(--text-secondary);
+        font-size: var(--fs-sm);
+        margin-bottom: var(--sp-6);
+      }
+      .login-error {
+        color: var(--danger);
+        font-size: var(--fs-sm);
+        margin-bottom: var(--sp-4);
+      }
+      .btn-sso {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        padding: var(--sp-3) var(--sp-6);
+        background: var(--accent);
+        border: none;
+        border-radius: var(--radius-md);
+        color: hsl(222, 28%, 7%);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+        text-decoration: none;
+        transition: background var(--duration-fast) var(--ease-out);
+      }
+      .btn-sso:hover {
+        background: var(--accent-hover);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-wrap">
+      <div class="login-card">
+        <h1>Optimus Vision</h1>
+        <p>Sign in with your organization account (OpenID Connect).</p>
+        <p id="err" class="login-error hidden"></p>
+        <a class="btn-sso" href="/auth/sso">Continue with SSO</a>
+      </div>
+    </div>
+    <script>
+      const p = new URLSearchParams(location.search);
+      if (p.get("error") === "not_registered") {
+        document.getElementById("err").textContent =
+          "Your account is not registered. Ask an administrator to add your email.";
+        document.getElementById("err").classList.remove("hidden");
+      }
+    </script>
+  </body>
+</html>

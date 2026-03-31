@@ -604,3 +604,37 @@ def remove(files, backend):
 
     if total_removed:
         click.echo(f"\nTotal: removed {total_removed} chunks.")
+
+
+# -----------------------------------------------------------------------
+# serve (web UI)
+# -----------------------------------------------------------------------
+
+@cli.command()
+@click.option("--host", default="127.0.0.1", show_default=True,
+              help="Host to bind to.")
+@click.option("--port", default=7778, show_default=True,
+              help="Port to listen on.")
+def serve(host, port):
+    """Launch the SentrySearch web interface."""
+    try:
+        import uvicorn
+    except ImportError:
+        click.secho(
+            "Web dependencies not installed.\n\n"
+            "Install with: uv sync --extra web",
+            fg="red", err=True,
+        )
+        raise SystemExit(1)
+
+    import os
+
+    from .web.server import app
+
+    click.echo(f"Starting Optimus Vision at http://{host}:{port}")
+    run_kw: dict = {"host": host, "port": port, "log_level": "warning"}
+    if os.environ.get("TRUST_PROXY", "").strip().lower() in ("1", "true", "yes"):
+        run_kw["forwarded_allow_ips"] = (
+            os.environ.get("FORWARDED_ALLOW_IPS", "*").strip() or "*"
+        )
+    uvicorn.run(app, **run_kw)

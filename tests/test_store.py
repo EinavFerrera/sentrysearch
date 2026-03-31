@@ -4,7 +4,21 @@ import math
 
 import pytest
 
-from sentrysearch.store import _make_chunk_id
+from sentrysearch.store import _make_chunk_id, get_data_root, get_default_db_path
+
+
+class TestDataRoot:
+    def test_get_data_root_none_without_env(self, monkeypatch):
+        monkeypatch.delenv("SENTRYSEARCH_DATA_DIR", raising=False)
+        assert get_data_root() is None
+
+    def test_get_data_root_from_env(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("SENTRYSEARCH_DATA_DIR", str(tmp_path))
+        assert get_data_root() == tmp_path.resolve()
+
+    def test_get_default_db_path_under_data_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("SENTRYSEARCH_DATA_DIR", str(tmp_path))
+        assert get_default_db_path() == tmp_path.resolve() / "db"
 
 
 class TestMakeChunkId:
