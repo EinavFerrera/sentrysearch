@@ -1,0 +1,35 @@
+# Optimus Vision — docker compose up -d
+# Copy .env.example to .env and set GEMINI_API_KEY before starting.
+
+services:
+  optimus-vision:
+    build: .
+    image: optimus-vision:latest
+    container_name: optimus-vision
+    restart: unless-stopped
+    ports:
+      - "${OPTIMUS_PORT:-7778}:7778"
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      SENTRYSEARCH_DATA_DIR: /data
+      OPTIMUS_SESSION_SECRET: ${OPTIMUS_SESSION_SECRET:-}
+      OPTIMUS_SESSION_HTTPS_ONLY: ${OPTIMUS_SESSION_HTTPS_ONLY:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      OIDC_BOOTSTRAP_ADMIN_EMAIL: ${OIDC_BOOTSTRAP_ADMIN_EMAIL:-}
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-}
+    volumes:
+      - optimus_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7778/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  optimus_data:
+    driver: local
