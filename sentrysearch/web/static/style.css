@@ -560,7 +560,9 @@ main {
 .chat-video-container video {
   display: block;
   width: 100%;
+  height: auto;
   max-height: 480px;
+  object-fit: contain;
   background: black;
 }
 .chat-video-actions {
@@ -969,7 +971,9 @@ main {
 .video-preview-panel video {
   display: block;
   width: 100%;
+  height: auto;
   max-height: 70vh;
+  object-fit: contain;
   background: black;
 }
 

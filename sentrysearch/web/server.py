@@ -1,5 +1,7 @@
 """FastAPI web server wrapping the SentrySearch pipeline."""
 
+import asyncio
+import logging
 import os
 import re
 import shutil
@@ -10,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from ..browser_video import path_for_browser_playback
 from ..store import get_data_root
 from .admin_routes import router as admin_router
 from .auth_db import init_auth_db, is_auth_enabled
@@ -17,6 +20,8 @@ from .auth_deps import require_search_access, require_write_access
 from .auth_routes import router as auth_router
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+logger = logging.getLogger(__name__)
 
 
 def _session_secret() -> str:
@@ -131,7 +136,12 @@ async def index_video(
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    from ..chunker import chunk_video, is_still_frame_chunk, preprocess_chunk
+    from ..chunker import (
+        chunk_video,
+        is_still_frame_chunk,
+        preprocess_chunk,
+        remux_mp4_faststart,
+    )
     from ..embedder import get_embedder, reset_embedder
     from ..store import SentryStore
 
@@ -139,6 +149,7 @@ async def index_video(
         embedder = get_embedder(backend)
         store = SentryStore(backend=backend)
         abs_path = str(save_path.resolve())
+        remux_mp4_faststart(abs_path)
 
         if store.is_indexed(abs_path):
             return {"status": "already_indexed", "file": abs_path, "chunks_indexed": 0}
@@ -299,7 +310,16 @@ async def download_clip(request: Request, filename: str, _: dict = Depends(requi
     clip_path = CLIPS_DIR / filename
     if not clip_path.exists():
         raise HTTPException(status_code=404, detail="Clip not found")
-    return _range_file_response(request, clip_path)
+    src = clip_path.resolve()
+    play_path = await asyncio.to_thread(path_for_browser_playback, src)
+    logger.info(
+        "http clip: filename=%s source=%s served=%s preview_derived=%s",
+        filename,
+        src,
+        play_path,
+        play_path.resolve() != src,
+    )
+    return _range_file_response(request, play_path, source_path=src)
 
 
 # ------------------------------------------------------------------
@@ -321,13 +341,48 @@ async def stream_video(
         raise HTTPException(status_code=404, detail="Video file not found on disk")
     if video_path.suffix.lower() not in _VIDEO_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Unsupported video format")
-    return _range_file_response(request, video_path)
+    src = video_path.resolve()
+    play_path = await asyncio.to_thread(path_for_browser_playback, src)
+    logger.info(
+        "http video: query=%s served=%s preview_derived=%s range=%s",
+        path,
+        play_path,
+        play_path.resolve() != src,
+        request.headers.get("range") or "full",
+    )
+    return _range_file_response(request, play_path, source_path=src)
 
 
-def _range_file_response(request: Request, file_path: Path):
+def _video_media_type(file_path: Path) -> str:
+    ext = file_path.suffix.lower()
+    if ext == ".mov":
+        return "video/quicktime"
+    return "video/mp4"
+
+
+def _playback_mode_header(source_path: Path | None, served_path: Path) -> dict[str, str]:
+    if source_path is None:
+        return {"X-SentrySearch-Playback": "unknown"}
+    try:
+        same = source_path.resolve() == served_path.resolve()
+    except OSError:
+        same = True
+    return {
+        "X-SentrySearch-Playback": "original" if same else "preview-cache",
+    }
+
+
+def _range_file_response(
+    request: Request,
+    file_path: Path,
+    *,
+    source_path: Path | None = None,
+):
     """Serve a file with HTTP Range support for browser video playback."""
+    media_type = _video_media_type(file_path)
     file_size = file_path.stat().st_size
     range_header = request.headers.get("range")
+    base_headers = {"Accept-Ranges": "bytes", **_playback_mode_header(source_path, file_path)}
 
     if range_header:
         match = re.match(r"bytes=(\d+)-(\d*)", range_header)
@@ -349,19 +404,20 @@ def _range_file_response(request: Request, file_path: Path):
                     remaining -= len(chunk)
                     yield chunk
 
+        h206 = {
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Content-Length": str(length),
+            **base_headers,
+        }
         return StreamingResponse(
             iterfile(),
             status_code=206,
-            media_type="video/mp4",
-            headers={
-                "Content-Range": f"bytes {start}-{end}/{file_size}",
-                "Content-Length": str(length),
-                "Accept-Ranges": "bytes",
-            },
+            media_type=media_type,
+            headers=h206,
         )
 
     return FileResponse(
         str(file_path),
-        media_type="video/mp4",
-        headers={"Accept-Ranges": "bytes"},
+        media_type=media_type,
+        headers=base_headers,
     )

@@ -300,6 +300,45 @@ def is_still_frame_chunk(
         return False
 
 
+def remux_mp4_faststart(video_path: str) -> bool:
+    """Rewrite MP4/MOV in place so the moov atom is at the start.
+
+    Browsers need this for reliable progressive playback and Range requests
+    when the source was muxed with moov at the end of the file.
+    Best-effort: returns False on failure without modifying *video_path*.
+    """
+    path = Path(video_path)
+    if not path.is_file():
+        return False
+    ffmpeg_exe = _get_ffmpeg_executable()
+    tmp = path.with_suffix(path.suffix + ".faststart.tmp")
+    try:
+        subprocess.run(
+            [
+                ffmpeg_exe,
+                "-y",
+                "-i",
+                str(path),
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+                str(tmp),
+            ],
+            capture_output=True,
+            check=True,
+            timeout=3600,
+        )
+        if not tmp.is_file() or tmp.stat().st_size < 32:
+            tmp.unlink(missing_ok=True)
+            return False
+        os.replace(tmp, path)
+        return True
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        return False
+
+
 def preprocess_chunk(
     chunk_path: str,
     target_resolution: int = 480,
@@ -328,6 +367,8 @@ def preprocess_chunk(
                 "-vf", f"scale=-2:{target_resolution},fps={target_fps}",
                 "-c:v", "libx264",
                 "-crf", "28",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
                 "-c:a", "aac",
                 "-b:a", "64k",
                 out_path,

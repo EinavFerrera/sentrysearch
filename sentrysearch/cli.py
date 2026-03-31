@@ -697,9 +697,24 @@ def serve(host, port):
         )
         raise SystemExit(1)
 
+    import logging
     import os
 
     from .web.server import app
+
+    def _setup_video_preview_logging() -> None:
+        """Print browser_video + web video route logs to stderr (INFO)."""
+        fmt = logging.Formatter("%(levelname)s [%(name)s] %(message)s")
+        for name in ("sentrysearch.browser_video", "sentrysearch.web.server"):
+            lg = logging.getLogger(name)
+            lg.setLevel(logging.INFO)
+            if not lg.handlers:
+                h = logging.StreamHandler()
+                h.setFormatter(fmt)
+                lg.addHandler(h)
+            lg.propagate = False
+
+    _setup_video_preview_logging()
 
     click.echo(f"Starting Optimus Vision at http://{host}:{port}")
     run_kw: dict = {"host": host, "port": port, "log_level": "warning"}

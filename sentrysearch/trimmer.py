@@ -4,7 +4,11 @@ import os
 import re
 import subprocess
 
-from .chunker import _get_ffmpeg_executable, _get_video_duration
+from .chunker import (
+    _get_ffmpeg_executable,
+    _get_video_duration,
+    remux_mp4_faststart,
+)
 
 
 def trim_clip(
@@ -69,10 +73,10 @@ def trim_clip(
     # Accept if copy produced a non-empty file (ffmpeg may return non-zero
     # but still write a usable file when cutting on non-keyframes)
     if os.path.isfile(output_path) and os.path.getsize(output_path) > 1024:
+        remux_mp4_faststart(output_path)
         return output_path
 
     # Attempt 2: re-encode with output seeking (more compatible, slower)
-    # Use mpeg4/aac which are built into every ffmpeg build (no libx264 needed)
     reencode_result = subprocess.run(
         [
             ffmpeg_exe,
@@ -80,8 +84,11 @@ def trim_clip(
             "-i", source_file,
             "-ss", str(padded_start),
             "-t", str(length),
-            "-c:v", "mpeg4",
-            "-q:v", "5",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
             "-c:a", "aac",
             "-b:a", "128k",
             output_path,
@@ -91,6 +98,7 @@ def trim_clip(
     )
 
     if reencode_result.returncode == 0 and os.path.isfile(output_path):
+        remux_mp4_faststart(output_path)
         return output_path
 
     # Attempt 3: just copy with output seeking (slower but avoids codec issues)
@@ -109,6 +117,7 @@ def trim_clip(
     )
 
     if final_result.returncode == 0 and os.path.isfile(output_path):
+        remux_mp4_faststart(output_path)
         return output_path
 
     # All attempts failed - provide helpful error message

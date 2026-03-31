@@ -66,6 +66,119 @@ function escAttr(str) {
   return str.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;');
 }
 
+/** MIME hint for <source>; must match /api/video Content-Type for playback. */
+function videoMimeFromPath(filePath) {
+  const lower = String(filePath || '').toLowerCase();
+  if (lower.endsWith('.mov')) return 'video/quicktime';
+  return 'video/mp4';
+}
+
+/** Set localStorage.sentrysearchVideoDebug = "1" and reload for verbose <video> logs. */
+const VIDEO_LOG = '[SentrySearch video]';
+
+let _libraryVideoDebugAbort = null;
+let _clipsVideoDebugAbort = null;
+
+function videoDebugVerbose() {
+  try {
+    return window.localStorage.getItem('sentrysearchVideoDebug') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function videoTrace(context, eventName, video, extra = {}) {
+  if (!videoDebugVerbose()) return;
+  console.debug(VIDEO_LOG, eventName, {
+    context,
+    readyState: video.readyState,
+    networkState: video.networkState,
+    ...extra,
+  });
+}
+
+async function videoProbeStreamUrl(resolvedUrl) {
+  try {
+    const r = await fetch(resolvedUrl, {
+      credentials: 'include',
+      headers: { Range: 'bytes=0-0' },
+    });
+    console.info(VIDEO_LOG, 'HTTP Range probe (first byte)', {
+      url: resolvedUrl,
+      status: r.status,
+      'X-SentrySearch-Playback': r.headers.get('X-SentrySearch-Playback'),
+      'Content-Type': r.headers.get('Content-Type'),
+      'Content-Range': r.headers.get('Content-Range'),
+    });
+  } catch (e) {
+    console.warn(VIDEO_LOG, 'HTTP Range probe failed', e);
+  }
+}
+
+/**
+ * Browser console logging for HTML5 video (filter Console by "SentrySearch video").
+ * @param {HTMLVideoElement} video
+ * @param {string} context - e.g. "library", "clips", "chat-preview"
+ * @param {string} urlOrPath - relative or absolute media URL
+ * @param {AbortSignal} [abortSignal] - when aborted, removes listeners (reuse same <video> in Library/Clips)
+ */
+function attachVideoDebugListeners(video, context, urlOrPath, abortSignal) {
+  const resolved = urlOrPath.startsWith('http')
+    ? urlOrPath
+    : new URL(urlOrPath, window.location.origin).href;
+
+  console.info(VIDEO_LOG, 'loading', { context, url: resolved });
+  videoProbeStreamUrl(resolved);
+
+  const mediaErrorNames = {
+    1: 'MEDIA_ERR_ABORTED',
+    2: 'MEDIA_ERR_NETWORK',
+    3: 'MEDIA_ERR_DECODE',
+    4: 'MEDIA_ERR_SRC_NOT_SUPPORTED',
+  };
+
+  const metaOpts = { once: true };
+  if (abortSignal) metaOpts.signal = abortSignal;
+  video.addEventListener('loadedmetadata', () => {
+    console.info(VIDEO_LOG, 'loadedmetadata', {
+      context,
+      duration: video.duration,
+      videoWidth: video.videoWidth,
+      videoHeight: video.videoHeight,
+    });
+  }, metaOpts);
+
+  const errOpts = {};
+  if (abortSignal) errOpts.signal = abortSignal;
+  video.addEventListener('error', () => {
+    if (!video.error) {
+      console.warn(VIDEO_LOG, 'error event (no MediaError on element)', { context, url: resolved });
+      return;
+    }
+    console.warn(VIDEO_LOG, 'MediaError', {
+      context,
+      url: resolved,
+      code: video.error.code,
+      name: mediaErrorNames[video.error.code] || 'unknown',
+      message: video.error.message || '',
+    });
+  }, errOpts);
+
+  if (videoDebugVerbose()) {
+    const vOpts = abortSignal ? { signal: abortSignal } : {};
+    ['loadstart', 'loadeddata', 'canplay', 'canplaythrough', 'playing', 'waiting', 'stalled', 'emptied', 'abort']
+      .forEach((type) => {
+        video.addEventListener(type, () => videoTrace(context, type, video), vOpts);
+      });
+  }
+}
+
+function videoPlayWithLog(video, context) {
+  return video.play().catch((e) => {
+    console.warn(VIDEO_LOG, 'play() rejected', { context, reason: String(e) });
+  });
+}
+
 window.__auth = { auth_enabled: false, user: null, oidc_configured: false };
 
 function canWrite() {
@@ -278,15 +391,16 @@ function previewSource(btn, sourcePath, startTime) {
   const videoUrl = `/api/video?path=${encodeURIComponent(sourcePath)}`;
   slot.innerHTML = `
     <div class="chat-video-container">
-      <video controls preload="auto">
-        <source src="${videoUrl}" type="video/mp4">
+      <video controls playsinline preload="auto">
+        <source src="${videoUrl}" type="${videoMimeFromPath(sourcePath)}">
       </video>
     </div>`;
 
   const video = slot.querySelector('video');
+  attachVideoDebugListeners(video, 'chat-preview', videoUrl);
   video.addEventListener('loadedmetadata', () => {
     video.currentTime = startTime;
-    video.play().catch(() => {});
+    videoPlayWithLog(video, 'chat-preview');
   }, { once: true });
 
   btn.textContent = '■ Hide';
@@ -311,13 +425,17 @@ async function trimAndPreview(btn, sourcePath, startTime, endTime) {
     const slot = btn.closest('.chat-result-body').querySelector('.chat-video-slot');
     slot.innerHTML = `
       <div class="chat-video-container">
-        <video controls preload="auto" autoplay>
+        <video controls playsinline preload="auto">
           <source src="${data.download_url}" type="video/mp4">
         </video>
         <div class="chat-video-actions">
           <a href="${data.download_url}" class="btn-sm" download>⬇ Download clip</a>
         </div>
       </div>`;
+
+    const trimVideo = slot.querySelector('video');
+    attachVideoDebugListeners(trimVideo, 'chat-trim-clip', data.download_url);
+    videoPlayWithLog(trimVideo, 'chat-trim-clip');
 
     btn.innerHTML = '✓ Saved';
     btn.disabled = true;
@@ -487,14 +605,22 @@ function openLibraryPreview(path, name) {
   const video = document.getElementById('library-video');
 
   title.textContent = name;
-  video.src = `/api/video?path=${encodeURIComponent(path)}`;
+  const vurl = `/api/video?path=${encodeURIComponent(path)}`;
+  if (_libraryVideoDebugAbort) _libraryVideoDebugAbort.abort();
+  _libraryVideoDebugAbort = new AbortController();
+  attachVideoDebugListeners(video, 'library', vurl, _libraryVideoDebugAbort.signal);
+  video.src = vurl;
   panel.classList.remove('hidden');
-  video.play().catch(() => {});
+  videoPlayWithLog(video, 'library');
 }
 
 function closeLibraryPreview() {
   const panel = document.getElementById('library-preview');
   const video = document.getElementById('library-video');
+  if (_libraryVideoDebugAbort) {
+    _libraryVideoDebugAbort.abort();
+    _libraryVideoDebugAbort = null;
+  }
   video.pause();
   video.src = '';
   panel.classList.add('hidden');
@@ -565,14 +691,21 @@ function openClipsPreview(url, name) {
   const video = document.getElementById('clips-video');
 
   title.textContent = name;
+  if (_clipsVideoDebugAbort) _clipsVideoDebugAbort.abort();
+  _clipsVideoDebugAbort = new AbortController();
+  attachVideoDebugListeners(video, 'clips', url, _clipsVideoDebugAbort.signal);
   video.src = url;
   panel.classList.remove('hidden');
-  video.play().catch(() => {});
+  videoPlayWithLog(video, 'clips');
 }
 
 function closeClipsPreview() {
   const panel = document.getElementById('clips-preview');
   const video = document.getElementById('clips-video');
+  if (_clipsVideoDebugAbort) {
+    _clipsVideoDebugAbort.abort();
+    _clipsVideoDebugAbort = null;
+  }
   video.pause();
   video.src = '';
   panel.classList.add('hidden');
