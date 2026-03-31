@@ -1,0 +1,65 @@
+# After you push to `master`, SSH into the VPS, git pull, and rebuild the container.
+#
+# Required GitHub repo secrets (Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST     — server IP or hostname (e.g. 49.12.34.180)
+#   DEPLOY_USER     — SSH user (e.g. conbo)
+#   DEPLOY_SSH_KEY  — full private key (PEM) that matches a public key in
+#                     that user's ~/.ssh/authorized_keys on the server
+#
+# Optional:
+#   DEPLOY_PATH     — app directory on the server (default: /opt/sentrysearch)
+#
+# Repository variable (Settings → Secrets and variables → Actions → Variables):
+#   DEPLOY_SSH_CONFIGURED = true   — required for deploy-on-push to master.
+#   Leave unset on forks; use "Run workflow" (workflow_dispatch) to test manually.
+#
+# Server requirements:
+#   - That directory is a git clone of this repo with `origin` pointing at GitHub
+#     (SSH URL recommended for private repos + deploy key on the repo).
+#   - User can run `docker compose` (in the `docker` group, or passwordless sudo).
+#   - No local edits you need to keep; `git pull --ff-only` may fail if the server
+#     has diverged commits.
+
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || vars.DEPLOY_SSH_CONFIGURED == 'true'
+    steps:
+      - name: Load SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust server host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Pull and docker compose on server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          REMOTE_PATH="${DEPLOY_PATH:-/opt/sentrysearch}"
+          ssh -o BatchMode=yes "${DEPLOY_USER}@${DEPLOY_HOST}" bash -s << EOF
+          set -euo pipefail
+          cd "${REMOTE_PATH}"
+          git fetch origin master
+          git checkout master
+          git pull --ff-only origin master
+          docker compose up -d --build
+          docker compose ps
+          EOF

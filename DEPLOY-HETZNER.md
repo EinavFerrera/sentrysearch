@@ -4,24 +4,24 @@ This guide walks through deploying the app on a **Hetzner Cloud** VPS: Docker, p
 
 ## What you need before you start
 
-| Item | Purpose |
-|------|---------|
-| **Hetzner account** | [Cloud Console](https://console.hetzner.cloud/) |
-| **Domain name** | For HTTPS and stable URLs (e.g. `vision.example.com`) |
-| **DNS access** | To create an **A record** pointing at the server |
+| Item                 | Purpose                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------- |
+| **Hetzner account**  | [Cloud Console](https://console.hetzner.cloud/)                                           |
+| **Domain name**      | For HTTPS and stable URLs (e.g. `vision.example.com`)                                     |
+| **DNS access**       | To create an **A record** pointing at the server                                          |
 | **`GEMINI_API_KEY`** | [Google AI Studio](https://aistudio.google.com/apikey) — required for indexing and search |
-| **SSH key** | Added to the server for login |
+| **SSH key**          | Added to the server for login                                                             |
 
 Optional for sign-in with Google (or another OIDC provider):
 
-- OAuth client id, secret, and issuer URL  
+- OAuth client id, secret, and issuer URL
 - Decide the **bootstrap admin email** (first admin when the user database is empty)
 
 ## Server sizing (quick pick)
 
-| Plan | When to use |
-|------|-------------|
-| **CX22** (2 vCPU, 4 GB) | Lowest cost; fine for light use with the **Gemini** backend. |
+| Plan                    | When to use                                                      |
+| ----------------------- | ---------------------------------------------------------------- |
+| **CX22** (2 vCPU, 4 GB) | Lowest cost; fine for light use with the **Gemini** backend.     |
 | **CX32** (4 vCPU, 8 GB) | Better if several people index long videos or you want headroom. |
 
 Pick a **region** close to your users. You do **not** need a GPU for the default Gemini stack. Start with **40–80 GB** disk; ChromaDB, uploads, and clips grow with usage.
@@ -149,8 +149,8 @@ mkdir -p /mnt/optimus-data/optimus
 Edit `docker-compose.yml` and replace the named volume with a bind mount:
 
 ```yaml
-    volumes:
-      - /mnt/optimus-data/optimus:/data
+volumes:
+  - /mnt/optimus-data/optimus:/data
 ```
 
 Remove or comment out the bottom `volumes:` block’s `optimus_data` entry if you no longer use the named volume.
@@ -161,14 +161,23 @@ Remove or comment out the bottom `volumes:` block’s `optimus_data` entry if yo
 
 So the UI is **not** exposed on the public internet over plain HTTP, publish the container port only on the loopback interface.
 
-Edit `docker-compose.yml` **ports** line:
+Edit `docker-compose.yml` so there is **exactly one** `ports` entry for the app. Do **not** list the same host port twice (for example both `"${OPTIMUS_PORT:-7778}:7778"` and `"127.0.0.1:${OPTIMUS_PORT:-7778}:7778"`) — Docker will fail to start the container.
+
+Use **either** localhost-only (recommended with Caddy):
 
 ```yaml
     ports:
       - "127.0.0.1:${OPTIMUS_PORT:-7778}:7778"
 ```
 
-Traffic from the internet should go **443 → Caddy → 127.0.0.1:7778**.
+**or** publish on all interfaces (only if you accept direct access to the app port):
+
+```yaml
+    ports:
+      - "${OPTIMUS_PORT:-7778}:7778"
+```
+
+Traffic from the internet should go **443 → Caddy → 127.0.0.1:7778** when using TLS in front.
 
 ---
 
@@ -257,30 +266,81 @@ If the database is empty and you set `OIDC_BOOTSTRAP_ADMIN_EMAIL`, the first suc
 
 ## Step 12 — Ongoing operations
 
-| Task | Command / note |
-|------|----------------|
-| **Logs** | `docker compose logs -f` |
-| **Restart** | `docker compose restart` |
-| **Update app** | `git pull && docker compose up -d --build` |
-| **Backup** | Snapshot the Hetzner volume or copy the data directory. Include at least `db/`, `uploads/`, `clips/`, and **`auth.db`** (under `/data` if you use SSO). |
+| Task           | Command / note                                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Logs**       | `docker compose logs -f`                                                                                                                                |
+| **Restart**    | `docker compose restart`                                                                                                                                |
+| **Update app** | `git pull && docker compose up -d --build`                                                                                                              |
+| **Backup**     | Snapshot the Hetzner volume or copy the data directory. Include at least `db/`, `uploads/`, `clips/`, and **`auth.db`** (under `/data` if you use SSO). |
+
+---
+
+## Automatic deploy when you push to GitHub (`master`)
+
+The repo includes **`.github/workflows/deploy.yml`**. After setup, a **push to `master`** can SSH into the VPS, **`git pull`**, and run **`docker compose up -d --build`**.
+
+### 1. SSH key used only by GitHub Actions
+
+On your **laptop**:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/github-deploy-sentrysearch -N ""
+```
+
+- Append **`github-deploy-sentrysearch.pub`** to **`~/.ssh/authorized_keys`** on the server for the deploy user (e.g. `conbo`).
+- In GitHub: **Repository → Settings → Secrets and variables → Actions → New repository secret**  
+  **`DEPLOY_SSH_KEY`** = full private key file contents (including `BEGIN` / `END` lines).
+
+Add secrets **`DEPLOY_HOST`** (server IP or hostname) and **`DEPLOY_USER`**.  
+Optional: **`DEPLOY_PATH`** if the app is not in `/opt/sentrysearch`.
+
+### 2. Turn on deploy-on-push
+
+**Settings → Secrets and variables → Actions → Variables → New repository variable**
+
+- **`DEPLOY_SSH_CONFIGURED`** = **`true`**
+
+Without this, pushes to `master` **skip** the deploy job (safe for forks). You can still run **Actions → Deploy → Run workflow** manually.
+
+### 3. Server: `git` remote and Docker
+
+```bash
+cd /opt/sentrysearch && git remote -v
+```
+
+Use an **SSH** `origin` URL for private repos; add a **Deploy key** (read-only) on the repo if needed.
+
+Put the deploy user in the **`docker`** group so `docker compose` works without a password:
+
+```bash
+sudo usermod -aG docker conbo
+```
+
+(Re-login.) If you rely on `sudo docker compose`, edit the workflow’s remote commands to use `sudo`.
+
+### 4. Ship it
+
+Merge **`deploy.yml`**, push to **`master`**, and watch **Actions → Deploy**.
+
+The job uses **`git pull --ff-only`** — avoid one-off edits to tracked files on the server only.
 
 ---
 
 ## Environment variables reference
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GEMINI_API_KEY` | **Yes** | Gemini API key. |
-| `SENTRYSEARCH_DATA_DIR` | Auto in Docker | `/data` in the image; all state under that path. |
-| `OPTIMUS_PORT` | No | Host port mapped into the container (default `7778`). |
-| `OPTIMUS_SESSION_SECRET` | **Yes (prod)** | Random secret for session cookies. |
-| `OPTIMUS_SESSION_HTTPS_ONLY` | **Yes (prod)** | Set `true` when only HTTPS is used. |
-| `OIDC_ISSUER` | For SSO | Issuer URL, no trailing slash (e.g. `https://accounts.google.com`). |
-| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | For SSO | From your IdP. |
-| `OIDC_REDIRECT_URI` | **Strongly recommended** behind a proxy | `https://your-domain/auth/callback` — must match IdP exactly. |
-| `OIDC_BOOTSTRAP_ADMIN_EMAIL` | No | First admin when user table is empty. |
-| `TRUST_PROXY` | Behind Caddy/nginx | Set `1` so `X-Forwarded-*` is honored (with `FORWARDED_ALLOW_IPS`). |
-| `FORWARDED_ALLOW_IPS` | With `TRUST_PROXY` | Often `*` in Docker when the app is only on `127.0.0.1`. |
+| Variable                                | Required                                | Description                                                         |
+| --------------------------------------- | --------------------------------------- | ------------------------------------------------------------------- |
+| `GEMINI_API_KEY`                        | **Yes**                                 | Gemini API key.                                                     |
+| `SENTRYSEARCH_DATA_DIR`                 | Auto in Docker                          | `/data` in the image; all state under that path.                    |
+| `OPTIMUS_PORT`                          | No                                      | Host port mapped into the container (default `7778`).               |
+| `OPTIMUS_SESSION_SECRET`                | **Yes (prod)**                          | Random secret for session cookies.                                  |
+| `OPTIMUS_SESSION_HTTPS_ONLY`            | **Yes (prod)**                          | Set `true` when only HTTPS is used.                                 |
+| `OIDC_ISSUER`                           | For SSO                                 | Issuer URL, no trailing slash (e.g. `https://accounts.google.com`). |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | For SSO                                 | From your IdP.                                                      |
+| `OIDC_REDIRECT_URI`                     | **Strongly recommended** behind a proxy | `https://your-domain/auth/callback` — must match IdP exactly.       |
+| `OIDC_BOOTSTRAP_ADMIN_EMAIL`            | No                                      | First admin when user table is empty.                               |
+| `TRUST_PROXY`                           | Behind Caddy/nginx                      | Set `1` so `X-Forwarded-*` is honored (with `FORWARDED_ALLOW_IPS`). |
+| `FORWARDED_ALLOW_IPS`                   | With `TRUST_PROXY`                      | Often `*` in Docker when the app is only on `127.0.0.1`.            |
 
 ---
 
@@ -308,9 +368,35 @@ Use **systemd** to supervise the process. Prefer Docker for simpler upgrades and
 
 ---
 
+## Verify config from the server (no SSH from your IDE required)
+
+Your editor/Cursor environment cannot log in with a **password** over SSH; it only works if **SSH keys** are set up for `conbo@your-server`. To double-check `docker-compose.yml` and `.env` on the VPS, run there:
+
+```bash
+cd /opt/sentrysearch
+git pull   # optional: get the latest scripts/verify_server_deploy.sh
+bash scripts/verify_server_deploy.sh
+```
+
+If `.env` was created with `sudo` and you see permission errors, either run `sudo bash scripts/verify_server_deploy.sh` or fix ownership once:
+
+```bash
+sudo chown conbo:conbo /opt/sentrysearch/.env
+chmod 600 /opt/sentrysearch/.env
+```
+
+Then `docker compose` can read `.env` without always using `sudo`.
+
+---
+
 ## Troubleshooting
 
 - **`redirect_uri_mismatch` (Google):** The **Authorized redirect URI** in Google must match `OIDC_REDIRECT_URI` and the **Admin** panel “Allowed redirect URI” line character-for-character (including `https` and no trailing slash unless you intentionally use one).
 - **429 / Gemini quota:** Reduce indexing load or upgrade the API plan.
 - **Disk full:** Expand the volume or remove old uploads from the Library tab.
 - **Video preview broken:** Source files must still exist at the paths stored in the index; moving files breaks preview until you re-index.
+- **Port `127.0.0.1:7778` already in use:** Another process or an old container holds the port. Run `sudo ss -tlnp | grep 7778`, stop the conflicting service, or change `OPTIMUS_PORT` and Caddy’s `reverse_proxy` target.
+- **`.env`: permission denied** (Compose): `.env` owned by root with mode `600` is not readable by user `conbo`. Use `sudo docker compose` from `/opt/sentrysearch`, or `chown` the file to `conbo` as above.
+- **Container stuck in `Created` / port bind errors:** You likely have **duplicate `ports:` lines** for the same host port, or another process already using that port. Keep a **single** mapping (see Step 7).
+- **`OPTIMUS_SESSION_SECRET`:** Must be a **long random string** (e.g. `openssl rand -hex 32`). It must **not** be your Google **OAuth client id** or any other API key — wrong values weaken session security.
+- **`OPTIMUS_SESSION_HTTPS_ONLY=true` without TLS:** Session cookies may not work over plain HTTP. Install Caddy (or nginx) with HTTPS, or set `OPTIMUS_SESSION_HTTPS_ONLY=false` until TLS is ready.
