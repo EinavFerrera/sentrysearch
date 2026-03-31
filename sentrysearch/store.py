@@ -1,13 +1,34 @@
 """ChromaDB vector store."""
 
 import hashlib
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
 import chromadb
 
 
-DEFAULT_DB_PATH = Path.home() / ".sentrysearch" / "db"
+def get_data_root() -> Path | None:
+    """Return persisted data root when ``SENTRYSEARCH_DATA_DIR`` is set.
+
+    Used by Docker and server deployments so ChromaDB, uploads, and clips
+    live on a single mounted volume. When unset, callers use per-path
+    defaults under the user's home directory.
+    """
+    v = os.environ.get("SENTRYSEARCH_DATA_DIR")
+    if not v:
+        return None
+    return Path(v).expanduser().resolve()
+
+
+def get_default_db_path() -> Path:
+    root = get_data_root()
+    if root:
+        return root / "db"
+    return Path.home() / ".sentrysearch" / "db"
+
+
+DEFAULT_DB_PATH = get_default_db_path()
 
 # Backend → collection name mapping
 _COLLECTION_NAMES = {
@@ -25,7 +46,7 @@ def detect_backend(db_path: str | Path | None = None) -> str | None:
 
     If both backends have data, returns 'gemini' (the default).
     """
-    db_path = str(db_path or DEFAULT_DB_PATH)
+    db_path = str(db_path or get_default_db_path())
     if not Path(db_path).exists():
         return None
     client = chromadb.PersistentClient(path=db_path)
@@ -52,7 +73,7 @@ class SentryStore:
     """Persistent vector store backed by ChromaDB."""
 
     def __init__(self, db_path: str | Path | None = None, backend: str = "gemini"):
-        db_path = str(db_path or DEFAULT_DB_PATH)
+        db_path = str(db_path or get_default_db_path())
         Path(db_path).mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=db_path)
         self._backend = backend
