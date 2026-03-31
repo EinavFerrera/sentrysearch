@@ -355,6 +355,7 @@ Use **systemd** to supervise the process. Prefer Docker for simpler upgrades and
 
 ## Troubleshooting
 
+- **`fatal: detected dubious ownership in repository`:** `/opt/sentrysearch` is owned by another user (e.g. root). Run **`sudo chown -R conbo:conbo /opt/sentrysearch`** (use your deploy user), or once: **`git config --global --add safe.directory /opt/sentrysearch`**. CI deploy will fail until the deploy user can run **`git pull`** without this error.
 - **`redirect_uri_mismatch` (Google):** The **Authorized redirect URI** in Google must match `OIDC_REDIRECT_URI` and the **Admin** panel “Allowed redirect URI” line character-for-character (including `https` and no trailing slash unless you intentionally use one).
 - **429 / Gemini quota:** Reduce indexing load or upgrade the API plan.
 - **Disk full:** Expand the volume or remove old uploads from the Library tab.

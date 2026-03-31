@@ -24,6 +24,11 @@ fi
 
 cd "$APP_DIR"
 
+# Linux: directory owner must match deploy user or Git 2.35+ blocks commands ("dubious ownership").
+if [[ "$(stat -c '%u' . 2>/dev/null || echo 0)" != "$(id -u)" ]]; then
+  bad "Directory not owned by $(whoami) — Git may refuse pull. Fix: sudo chown -R $(whoami):$(whoami) \"$APP_DIR\""
+fi
+
 if ! git rev-parse --is-inside-work-tree &>/dev/null; then
   bad "Not a git repository: $APP_DIR"
   exit 1
